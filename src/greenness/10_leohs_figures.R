@@ -7,6 +7,7 @@
 #             Landsat 7 alone (uncalibrated) and MODIS NDVI for reference.
 # leohs_fig2: Sen's slope trend flags, NDVI and NIRv, per calibration.
 # leohs_fig3: summer NDVI by sensor under each calibration.
+# leohs_fig4: one-plot summary: each calibration's agreement with Landsat 7 on two tests.
 #
 # Requires outputs of 04_growing_season.R, 09_leohs.R (regional_* sets) and 09b_l7_only.R.
 
@@ -18,7 +19,7 @@ out_dirs <- c(gr_fig_dir, file.path(gr_dir, 'deliverable'))
 leohs_sets <- c('regional_ols', 'regional_rma', 'regional_ts')
 
 ga <- bind_rows(readRDS(file.path(gr_dir, 'greenness_annual.rds')) %>%
-                    filter(var %in% c('ndvi_gs_raw', 'ndvi_gs_xcal', 'nirv_gs_xcal')),
+                    filter(var %in% c('ndvi_gs_raw', 'ndvi_gs_xcal', 'nirv_gs_raw', 'nirv_gs_xcal')),
                 lapply(file.path(gr_dir, paste0('greenness_annual_leohs_', leohs_sets, '.rds')), readRDS),
                 readRDS(file.path(gr_dir, 'greenness_annual_l7only.rds'))) %>%
     select(-n_pts)
@@ -42,7 +43,6 @@ cal_labs <- c(xcal = 'LandsatTS random forest (delivered series)',
 
 # fig1: NDVI anomaly series ####
 anom <- d %>%
-    filter(grepl('^ndvi', var)) %>%
     group_by(site_code, var) %>%
     mutate(a = val - mean(val[water_year %in% 2001:2012], na.rm = TRUE)) %>%
     ungroup() %>%
@@ -164,22 +164,28 @@ obs <- readRDS(file.path(gr_dir, 'obs_main.rds'))[doy %in% 152:243]
 coefs <- read.csv(here('src', 'greenness', 'leohs_coefficients.csv'))
 for(cs in leohs_sets){
     leohs_apply(obs, coefs[coefs$set == cs, ])
-    setnames(obs, 'ndvi.leohs', paste0('leohs_', cs))
+    setnames(obs, c('ndvi.leohs', 'nirv.leohs'), paste0(c('ndvi', 'nirv'), '_leohs_', cs))
 }
-setnames(obs, c('ndvi', 'ndvi.xcal'), c('raw', 'xcal'))
 versions <- c('raw', names(cal_labs))
 
-by_sensor <- melt(obs[, c('site_code', 'sample.id', 'sensor', 'year', versions), with = FALSE],
-                  id.vars = c('site_code', 'sample.id', 'sensor', 'year'), variable.name = 'version')[
-    !is.na(value), .(value = median(value)), by = .(site_code, sample.id, sensor, year, version)][
-    , .(value = median(value), n_px = .N), by = .(site_code, sensor, year, version)][n_px >= 5]
-l7_ref <- by_sensor[sensor == 'LE7' & version == 'raw', .(ref = mean(value)), by = site_code]
-by_sensor <- by_sensor[l7_ref, on = 'site_code'][, dep := value - ref]
-sensor_series <- by_sensor[, .(med = median(dep), n_sites = .N), by = .(sensor, version, year)][
-    n_sites >= 0.5 * length(sites)]
+summer_by_sensor <- function(si){
+    cols <- setNames(c(si, paste0(si, '.xcal'), paste0(si, '_', names(cal_labs)[-1])), versions)
+    x <- obs[, c('site_code', 'sample.id', 'sensor', 'year', cols), with = FALSE]
+    setnames(x, cols, names(cols))
+    x <- melt(x, id.vars = c('site_code', 'sample.id', 'sensor', 'year'), variable.name = 'version')[
+        !is.na(value), .(value = median(value)), by = .(site_code, sample.id, sensor, year, version)][
+        , .(value = median(value), n_px = .N), by = .(site_code, sensor, year, version)][n_px >= 5]
+    l7_ref <- x[sensor == 'LE7' & version == 'raw', .(ref = mean(value)), by = site_code]
+    x <- x[l7_ref, on = 'site_code'][, dep := value - ref]
+    x[, .(med = median(dep), n_sites = .N), by = .(sensor, version, year)][n_sites >= 0.5 * length(sites)]
+}
+overlap_gap <- function(ss){
+    ov <- ss[year %in% 2013:2017 & sensor %in% c('LE7', 'LC8'), .(med = mean(med)), by = .(version, sensor)]
+    dcast(ov, version ~ sensor, value.var = 'med')[, gap := LC8 - LE7]
+}
 
-overlap <- sensor_series[year %in% 2013:2017 & sensor %in% c('LE7', 'LC8'), .(med = mean(med)), by = .(version, sensor)]
-overlap <- dcast(overlap, version ~ sensor, value.var = 'med')[, gap := LC8 - LE7]
+sensor_series <- summer_by_sensor('ndvi')
+overlap <- overlap_gap(sensor_series)
 print(overlap)
 
 panel_labs <- setNames(paste0('(', letters[seq_along(versions)], ') ',
@@ -204,3 +210,38 @@ fig3 <- ggplot(sensor_series, aes(year, med, color = sensor)) +
     theme(legend.position = 'bottom', panel.grid = element_blank(),
           strip.background = element_blank(), strip.text = element_text(hjust = 0, face = 'bold'))
 for(od in out_dirs) ggsave(file.path(od, 'leohs_fig3_ndvi_by_sensor.png'), fig3, width = 12, height = 10, dpi = 200)
+
+# fig4: summary of both tests against Landsat 7 ####
+# x: Landsat 8 minus Landsat 7 where they overlap (fig3); y: drop after 2013 beyond
+# that of uncalibrated Landsat 7 alone (fig1). (0, 0) = no offset relative to Landsat 7.
+tests <- rbindlist(lapply(c('ndvi', 'nirv'), function(si){
+    ov <- if(si == 'ndvi') overlap else overlap_gap(summer_by_sensor(si))
+    ov[, .(index = toupper(si), version = as.character(version), gap,
+           extra_drop = sh[paste0(si, '_gs_', version)] - sh[paste0(si, '_gs_l7only')])]
+}))
+tests[, lab := c(raw = 'Uncalibrated', cal_labs)[version]]
+tests[version == 'xcal', lab := 'LandsatTS random forest\n(delivered)']
+print(tests)
+write.csv(tests, file.path(gr_dir, 'deliverable', 'leohs_fig4_summary.csv'), row.names = FALSE)
+
+fig4 <- ggplot(tests, aes(gap, extra_drop)) +
+    geom_hline(yintercept = 0, color = 'grey60') +
+    geom_vline(xintercept = 0, color = 'grey60') +
+    geom_point(aes(shape = version == 'raw', color = version == 'xcal'), size = 3.2, stroke = 1.1) +
+    ggrepel::geom_text_repel(aes(label = lab), size = 3.2, min.segment.length = 0, seed = 1,
+                             box.padding = 0.5, lineheight = 0.9) +
+    scale_shape_manual(values = c(`TRUE` = 1, `FALSE` = 16), guide = 'none') +
+    scale_color_manual(values = c(`TRUE` = '#D55E00', `FALSE` = 'black'), guide = 'none') +
+    facet_wrap(~index, scales = 'free') +
+    labs(x = 'Landsat 8 minus Landsat 7 where both flew (summer 2013-2017)',
+         y = 'Change after 2013 beyond that of\nuncalibrated Landsat 7 alone',
+         title = 'How closely each Landsat 8/9 calibration agrees with Landsat 7',
+         subtitle = paste0('Index units; (0, 0) = no offset relative to Landsat 7, which no calibration modifies. ',
+                           'Change after 2013 = 2013-2017 mean minus 2001-2012 mean.\n',
+                           'Cross-site medians, ', length(sites), ' non-experimental CONUS sites; ',
+                           'Landsat 5 uses the LandsatTS calibration throughout')) +
+    theme_bw() +
+    theme(panel.grid = element_blank(), plot.subtitle = element_text(size = 9),
+          strip.background = element_blank(), strip.text = element_text(face = 'bold', size = 11),
+          plot.margin = margin(5.5, 20, 5.5, 5.5))
+for(od in out_dirs) ggsave(file.path(od, 'leohs_fig4_summary.png'), fig4, width = 11, height = 5.5, dpi = 200)
