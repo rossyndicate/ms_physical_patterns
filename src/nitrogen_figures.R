@@ -85,6 +85,11 @@ ndep_data_for_trends_ann <- readRDS("data_working/ndep_data_for_trends_annual.rd
 # Climate trends (from mega_zipper_data.R script)
 clim_trends <- read_csv("data_working/trends/full_prisim_climate.csv")
 
+# y-limits for the greenness (gpp_CONUS_30m_median) trend panels, from the data so
+# they fit either index (see greenness_var in src/greenness/swap_in_greenness.R)
+greenness_trend_lim <- max(abs(clim_trends$trend[clim_trends$var == "gpp_CONUS_30m_median"]),
+                           na.rm = TRUE) * 1.1
+
 # Discharge metrics
 q_metrics <- readRDS("data_working/discharge_metrics_siteyear.rds")
 
@@ -780,7 +785,8 @@ clim_dep <- clim_raw %>%
 ##### Productivity #####
 
 prod_raw <- read_feather(here('data_raw',
-                              'spatial_timeseries_vegetation.feather'))
+                              'spatial_timeseries_vegetation.feather')) %>%
+    swap_in_greenness()
 
 # Filter productivity dataset for sites of interest
 prod <- prod_raw %>%
@@ -796,7 +802,7 @@ prod <- prod_raw %>%
 prod_trim_annual <- prod %>%
     filter(site_code %in% my41sites) %>%
     group_by(site_code, water_year) %>%
-    summarize(sum_ann_prod = sum(gpp_CONUS_30m_median, na.rm = TRUE)) %>%
+    summarize(sum_ann_prod = sum_or_na(gpp_CONUS_30m_median)) %>%
     ungroup() %>%
     full_join(sites_to_plot)
 
@@ -817,7 +823,7 @@ prod_trim_annual <- prod %>%
                                       "grey80",
                                       "transparent")) +
         labs(x = "Water Year",
-             y = "Cumulative Annual GPP (kg C/m<sup>2</sup>)") +
+             y = greenness_label) +
         theme_bw() +
         facet_grid(keepkeepkeep~.) +
         theme(axis.title.y = element_markdown(),
@@ -1630,7 +1636,8 @@ N_dep_data20 <- full_join(mean_N_VWM_annual20_nonexp, dep_decadal20)
 prod_raw <- read_feather(here('data_raw',
                               'ms',
                               'v2',
-                              'spatial_timeseries_vegetation.feather'))
+                              'spatial_timeseries_vegetation.feather')) %>%
+    swap_in_greenness()
 
 # Filter productivity dataset for sites of interest
 prod <- prod_raw %>%
@@ -1648,7 +1655,7 @@ prod <- prod_raw %>%
 prod_annual <- prod %>%
     filter(site_code %in% annual_sites) %>%
     group_by(site_code, water_year) %>%
-    summarize(sum_ann_prod = sum(gpp_CONUS_30m_median, na.rm = TRUE)) %>%
+    summarize(sum_ann_prod = sum_or_na(gpp_CONUS_30m_median)) %>%
     ungroup()
 
 # Only 2010-2020
@@ -1657,7 +1664,7 @@ prod_annual20 <- prod %>%
     filter(water_year > 2009) %>%
     filter(water_year < 2021) %>%
     group_by(site_code, water_year) %>%
-    summarize(sum_ann_prod20 = sum(gpp_CONUS_30m_median, na.rm = TRUE)) %>%
+    summarize(sum_ann_prod20 = sum_or_na(gpp_CONUS_30m_median)) %>%
     ungroup()
 
 # Further aggregates productivity data at the site-level
@@ -1738,7 +1745,7 @@ N_data20 <- left_join(N_data20, clim_decadal20)
         geom_density(data = N_data20,
                      mapping = aes(x = mean_sum_ann_prod20),
                      color = "#4CA49E", linewidth = 2) +
-        labs(x = "Cumulative Annual GPP (kg C/m<sup>2</sup>)",
+        labs(x = greenness_label,
              y = "Density") +
         theme_bw() +
         theme(axis.title.x = element_markdown()))
@@ -2072,11 +2079,17 @@ dat_corr_ppt <- data.frame(
               strip.text.x = element_blank(),
               axis.title.y = element_blank()))
 
-dat_corr_gpp <- data.frame(
-    xposition = c(1.75, 1.75, 1.75),
-    yposition = c(0.18, 5, 4.75),
-    label = c("0.34", " ", " "),
-    analyte_N = c("NH3_N", "NO3_N", "TDN"))
+# Greenness labels come from corr_values (|r| > 0.3), since they change with
+# greenness_var (src/greenness/swap_in_greenness.R)
+dat_corr_gpp <- corr_values %>%
+    transmute(analyte_N,
+              label = ifelse(abs(corr_gpp) > 0.3, sprintf("%.2f", corr_gpp), " "),
+              sign = ifelse(corr_gpp > 0, "positive", "negative")) %>%
+    left_join(data.frame(analyte_N = c("NH3_N", "NO3_N", "TDN"),
+                         yposition = c(0.18, 5, 4.75)),
+              by = "analyte_N") %>%
+    mutate(xposition = quantile(N_corr_dat_trim$mean_sum_ann_prod20, 0.9,
+                                na.rm = TRUE))
 
 (corr14 <- ggplot(N_corr_dat_trim,
                   aes(x = mean_sum_ann_prod20,
@@ -2085,9 +2098,12 @@ dat_corr_gpp <- data.frame(
         geom_text(data = dat_corr_gpp,
                   mapping = aes(x = xposition,
                                 y = yposition,
-                                label = label),
-                  color = "red", fontface = "bold") +
-        labs(x = "Mean Annual Prod. (kg C/m^2)", y = "VWM (mg/L)") +
+                                label = label,
+                                color = sign),
+                  fontface = "bold") +
+        scale_color_manual(values = c(negative = "blue", positive = "red"),
+                           guide = "none") +
+        labs(x = paste("Mean", greenness_label), y = "VWM (mg/L)") +
         facet_wrap(.~analyte_N, scales = "free_y") +
         theme_bw() +
         theme(strip.background = element_blank(),
@@ -2841,18 +2857,18 @@ no3_clim_trends_ann_wide <- no3_clim_trends_ann_wide %>%
                        color = group,
                        size = group)) +
         xlim(-0.06, 0.06) +
-        ylim(-0.001, 0.001) +
-        annotate("text", x = -0.04, y = 0.001, label = "Cooling, Greening") +
-        annotate("text",x = -0.04, y = -0.001, label = "Cooling, Browning") +
-        annotate("text",x = 0.04, y = 0.001, label = "Warming, Greening") +
-        annotate("text",x = 0.04, y = -0.001, label = "Warming, Browning") +
+        ylim(-greenness_trend_lim, greenness_trend_lim) +
+        annotate("text", x = -0.04, y = greenness_trend_lim, label = "Cooling, Greening") +
+        annotate("text",x = -0.04, y = -greenness_trend_lim, label = "Cooling, Browning") +
+        annotate("text",x = 0.04, y = greenness_trend_lim, label = "Warming, Greening") +
+        annotate("text",x = 0.04, y = -greenness_trend_lim, label = "Warming, Browning") +
         scale_shape_manual(values = c(20, 20, 4)) +
         scale_size_manual(values = c(6, 4, 2)) +
         scale_color_manual(values = c("blue",
                                       "gray56",
                                       "gray76")) +
         labs(x = "Mean Annual Temperature Trend",
-             y = "Mean Annual Productivity Trend",
+             y = paste(greenness_label, "trend (per year)"),
              color = expression(paste(NO[3], "-N Trend")),
              shape = expression(paste(NO[3], "-N Trend")),
              size = expression(paste(NO[3], "-N Trend"))) +
@@ -2870,11 +2886,11 @@ no3_clim_trends_ann_wide <- no3_clim_trends_ann_wide %>%
                        color = group2,
                        size = group2)) +
         xlim(-0.06, 0.06) +
-        ylim(-0.001, 0.001) +
-        annotate("text", x = -0.04, y = 0.001, label = "Cooling, Greening") +
-        annotate("text",x = -0.04, y = -0.001, label = "Cooling, Browning") +
-        annotate("text",x = 0.04, y = 0.001, label = "Warming, Greening") +
-        annotate("text",x = 0.04, y = -0.001, label = "Warming, Browning") +
+        ylim(-greenness_trend_lim, greenness_trend_lim) +
+        annotate("text", x = -0.04, y = greenness_trend_lim, label = "Cooling, Greening") +
+        annotate("text",x = -0.04, y = -greenness_trend_lim, label = "Cooling, Browning") +
+        annotate("text",x = 0.04, y = greenness_trend_lim, label = "Warming, Greening") +
+        annotate("text",x = 0.04, y = -greenness_trend_lim, label = "Warming, Browning") +
         scale_shape_manual(values = c(20, 15, 15, 20, 15, 4)) +
         scale_size_manual(values = c(6, 4, 4, 4, 3, 2)) +
         scale_color_manual(values = c("blue",
@@ -2884,7 +2900,7 @@ no3_clim_trends_ann_wide <- no3_clim_trends_ann_wide %>%
                                       "gray56",
                                       "gray76")) +
         labs(x = "Mean Annual Temperature Trend",
-             y = "Mean Annual Productivity Trend",
+             y = paste(greenness_label, "trend (per year)"),
              color = expression(paste(NO[3], "-N Trend")),
              shape = expression(paste(NO[3], "-N Trend")),
              size = expression(paste(NO[3], "-N Trend"))) +
@@ -3103,18 +3119,18 @@ nh3_clim_trends_ann_wide <- nh3_clim_trends_ann_wide %>%
                        color = group,
                        size = group)) +
         xlim(-0.06, 0.06) +
-        ylim(-0.001, 0.001) +
-        annotate("text", x = -0.04, y = 0.001, label = "Cooling, Greening") +
-        annotate("text",x = -0.04, y = -0.001, label = "Cooling, Browning") +
-        annotate("text",x = 0.04, y = 0.001, label = "Warming, Greening") +
-        annotate("text",x = 0.04, y = -0.001, label = "Warming, Browning") +
+        ylim(-greenness_trend_lim, greenness_trend_lim) +
+        annotate("text", x = -0.04, y = greenness_trend_lim, label = "Cooling, Greening") +
+        annotate("text",x = -0.04, y = -greenness_trend_lim, label = "Cooling, Browning") +
+        annotate("text",x = 0.04, y = greenness_trend_lim, label = "Warming, Greening") +
+        annotate("text",x = 0.04, y = -greenness_trend_lim, label = "Warming, Browning") +
         scale_shape_manual(values = c(20, 20, 4)) +
         scale_size_manual(values = c(6, 4, 2)) +
         scale_color_manual(values = c("purple",
                                       "gray56",
                                       "gray76")) +
         labs(x = "Mean Annual Temperature Trend",
-             y = "Mean Annual Productivity Trend",
+             y = paste(greenness_label, "trend (per year)"),
              color = expression(paste(NH[3], "-N Trend")),
              shape = expression(paste(NH[3], "-N Trend")),
              size = expression(paste(NH[3], "-N Trend"))) +
@@ -3132,11 +3148,11 @@ nh3_clim_trends_ann_wide <- nh3_clim_trends_ann_wide %>%
                        color = group2,
                        size = group2)) +
         xlim(-0.06, 0.06) +
-        ylim(-0.001, 0.001) +
-        annotate("text", x = -0.04, y = 0.001, label = "Cooling, Greening") +
-        annotate("text",x = -0.04, y = -0.001, label = "Cooling, Browning") +
-        annotate("text",x = 0.04, y = 0.001, label = "Warming, Greening") +
-        annotate("text",x = 0.04, y = -0.001, label = "Warming, Browning") +
+        ylim(-greenness_trend_lim, greenness_trend_lim) +
+        annotate("text", x = -0.04, y = greenness_trend_lim, label = "Cooling, Greening") +
+        annotate("text",x = -0.04, y = -greenness_trend_lim, label = "Cooling, Browning") +
+        annotate("text",x = 0.04, y = greenness_trend_lim, label = "Warming, Greening") +
+        annotate("text",x = 0.04, y = -greenness_trend_lim, label = "Warming, Browning") +
         scale_shape_manual(values = c(20, 15, 20, 15, 4)) +
         scale_size_manual(values = c(6, 4, 4, 3, 2)) +
         scale_color_manual(values = c("purple",
@@ -3145,7 +3161,7 @@ nh3_clim_trends_ann_wide <- nh3_clim_trends_ann_wide %>%
                                       "gray56",
                                       "gray76")) +
         labs(x = "Mean Annual Temperature Trend",
-             y = "Mean Annual Productivity Trend",
+             y = paste(greenness_label, "trend (per year)"),
              color = expression(paste(NH[3], "-N Trend")),
              shape = expression(paste(NH[3], "-N Trend")),
              size = expression(paste(NH[3], "-N Trend"))) +
@@ -3365,11 +3381,11 @@ tdn_clim_trends_ann_wide <- tdn_clim_trends_ann_wide %>%
                        color = group,
                        size = group)) +
         xlim(-0.06, 0.06) +
-        ylim(-0.001, 0.001) +
-        annotate("text", x = -0.04, y = 0.001, label = "Cooling, Greening") +
-        annotate("text",x = -0.04, y = -0.001, label = "Cooling, Browning") +
-        annotate("text",x = 0.04, y = 0.001, label = "Warming, Greening") +
-        annotate("text",x = 0.04, y = -0.001, label = "Warming, Browning") +
+        ylim(-greenness_trend_lim, greenness_trend_lim) +
+        annotate("text", x = -0.04, y = greenness_trend_lim, label = "Cooling, Greening") +
+        annotate("text",x = -0.04, y = -greenness_trend_lim, label = "Cooling, Browning") +
+        annotate("text",x = 0.04, y = greenness_trend_lim, label = "Warming, Greening") +
+        annotate("text",x = 0.04, y = -greenness_trend_lim, label = "Warming, Browning") +
         scale_shape_manual(values = c(20, 20, 20, 4)) +
         scale_size_manual(values = c(6, 6, 4, 2)) +
         scale_color_manual(values = c("cyan4",
@@ -3377,7 +3393,7 @@ tdn_clim_trends_ann_wide <- tdn_clim_trends_ann_wide %>%
                                       "gray56",
                                       "gray76")) +
         labs(x = "Mean Annual Temperature Trend",
-             y = "Mean Annual Productivity Trend",
+             y = paste(greenness_label, "trend (per year)"),
              color = "TDN Trend",
              shape = "TDN Trend",
              size = "TDN Trend") +
@@ -3395,11 +3411,11 @@ tdn_clim_trends_ann_wide <- tdn_clim_trends_ann_wide %>%
                        color = group2,
                        size = group2)) +
         xlim(-0.06, 0.06) +
-        ylim(-0.001, 0.001) +
-        annotate("text", x = -0.04, y = 0.001, label = "Cooling, Greening") +
-        annotate("text",x = -0.04, y = -0.001, label = "Cooling, Browning") +
-        annotate("text",x = 0.04, y = 0.001, label = "Warming, Greening") +
-        annotate("text",x = 0.04, y = -0.001, label = "Warming, Browning") +
+        ylim(-greenness_trend_lim, greenness_trend_lim) +
+        annotate("text", x = -0.04, y = greenness_trend_lim, label = "Cooling, Greening") +
+        annotate("text",x = -0.04, y = -greenness_trend_lim, label = "Cooling, Browning") +
+        annotate("text",x = 0.04, y = greenness_trend_lim, label = "Warming, Greening") +
+        annotate("text",x = 0.04, y = -greenness_trend_lim, label = "Warming, Browning") +
         scale_shape_manual(values = c(20, 15, 20, 20, 15, 4)) +
         scale_size_manual(values = c(6, 4, 6, 4, 3, 2)) +
         scale_color_manual(values = c("cyan4",
@@ -3409,7 +3425,7 @@ tdn_clim_trends_ann_wide <- tdn_clim_trends_ann_wide %>%
                                       "gray56",
                                       "gray76")) +
         labs(x = "Mean Annual Temperature Trend",
-             y = "Mean Annual Productivity Trend",
+             y = paste(greenness_label, "trend (per year)"),
              color = "TDN Trend",
              shape = "TDN Trend",
              size = "TDN Trend") +

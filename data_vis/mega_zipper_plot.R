@@ -168,13 +168,13 @@ c_master
 ## assemble plot #####
 zipper_plot <- make_trend_panel('temp_mean_full', 'T') +
     make_trend_panel('precip_mean_full', 'PPT')+  labs(caption = 'Trends from 1980-Present') +
-    make_trend_panel('gpp_CONUS_30m_median_full', 'GPP')+
+    make_trend_panel('gpp_CONUS_30m_median_full', greenness_short)+
     c_master +
     make_trend_panel('temp_mean_longest_run', 'T') +
     #make_trend_panel('stream_temp_mean_longest_run', 'Ts')+
     make_trend_panel('precip_mean_longest_run', 'PPT') + labs(caption = 'Trends cut to Q data') +
     add_legend(
-        make_trend_panel('gpp_conus_longest_run', 'GPP') #+
+        make_trend_panel('gpp_conus_longest_run', greenness_short) #+
         )+
     plot_layout(ncol = 7, widths = c(.25, .25, .25, 1.5, .25, .25, .25))#+
     #plot_annotation(tag_levels = 'A')
@@ -182,11 +182,11 @@ zipper_plot
 
 # make secondary plot of new indices ####
 zipper_plot <- make_trend_panel('temp_mean_ann_full', 'Ta')
-    make_trend_panel('gpp_conus_full', 'GPP')+
+    make_trend_panel('gpp_conus_full', greenness_short)+
     make_trend_panel('precip_mean_ann_full', 'P')+
     c_master +
     make_trend_panel('temp_mean_ann_longest_run', 'Ta') +
-    make_trend_panel('gpp_conus_longest_run', 'GPP')+
+    make_trend_panel('gpp_conus_longest_run', greenness_short)+
     make_trend_panel('precip_mean_ann_longest_run', 'P') +
     make_trend_panel('p_n_days_longest_run', 'P days') +
     make_trend_panel('p_mean_intensity_longest_run', 'P int') +
