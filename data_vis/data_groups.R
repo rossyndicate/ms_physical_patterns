@@ -72,7 +72,7 @@ gpp_plot <- ggplot(full_prism_trends, aes(x = trend_temp_mean*10, y = trend_prec
     geom_vline(xintercept = 0) +
     labs(x = 'Temperature trend \n (decade, mean annual, degrees C)',
          y = 'Precipitation trend \n (decade, mean annual, mm)',
-         color = 'GPP trend \n (mean, kgC/m^2/decade)',
+         color = paste(greenness_short, 'trend \n (per decade)'),
          shape = 'Condition')+
     lims(x = c(-.6, .6),
          y = c(-.4, .4))+

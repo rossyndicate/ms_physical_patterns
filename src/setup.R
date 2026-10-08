@@ -45,6 +45,10 @@ my_ms_dir <- here('data_raw', 'ms')
 ms_site_data <- ms_load_sites()
 ms_ws_attr <- read_feather('data_raw/ms/v2/watershed_summaries.feather')
 
+# calibrated Landsat greenness replaces Landsat GPP (choose NDVI/NIRv in this file)
+source(here('src', 'greenness', 'swap_in_greenness.R'))
+ms_ws_attr <- swap_in_greenness_attr(ms_ws_attr)
+
 # set master vars for data coverage to define 'good years'
 # shared across all data coverage scripts
 start_year_master <- 2001

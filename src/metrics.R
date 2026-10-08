@@ -834,6 +834,7 @@ saveRDS(n_q_cq_decadal, "data_working/N_CQ_decadal.rds")
 # PRODUCTIVITY ####
 ## read data ####
 p_data <- read_feather(here('data_raw', 'ms', 'v2', 'spatial_timeseries_vegetation.feather')) %>%
+    swap_in_greenness() %>%
     mutate(month = month(date),
            year = year(date),
            water_year = case_when(month %in% c(10, 11, 12) ~ year+1,
